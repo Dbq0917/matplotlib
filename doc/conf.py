@@ -136,6 +136,7 @@ extensions = [
     'sphinxext.math_symbol_table',
     'sphinxext.missing_references',
     'sphinxext.mock_gui_toolkits',
+    'sphinxext.property_aliases',
     'sphinxext.rcparams',
     'sphinxext.redirect_from',
     'sphinx_copybutton',

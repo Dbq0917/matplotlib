@@ -202,6 +202,7 @@ Functions
    getp
    setp
    kwdoc
+   suppress_alias_warnings
 
 Helper classes
 ==============
@@ -214,3 +215,36 @@ Helper classes
    ArtistInspector
    ArtistList
    BlendMode
+
+.. _renamed-properties:
+
+Renamed properties
+==================
+
+When a property is renamed, the historical name keeps working as an alias:
+accessing it through `.Artist.set`, `.Artist.update`, `setp` or `getp`
+resolves to the current name and emits a
+`~matplotlib.MatplotlibDeprecationWarning` pointing at the new name.  The
+warnings can be silenced for bulk processing with
+`.artist.suppress_alias_warnings` or through the standard `warnings`
+machinery.
+
+Aliases are defined per class in the ``_renamed_properties`` attribute and
+are merged along the inheritance hierarchy, so a rename in a subclass does
+not invalidate aliases defined by its base classes.
+
+Serialization compatibility policy
+----------------------------------
+
+Property mappings produced by Matplotlib (`.Artist.properties`, and any
+other serialization of property names) always use the *current* canonical
+names; historical names are never written out.  Deserialization
+(`.Artist.update`, `.Artist.set`, `setp`) accepts *both* current and
+historical names, so files or scripts written against an older Matplotlib
+keep working.  Pickled figures are unaffected by renames, because pickles
+store attribute values, not property names.
+
+The table below is generated automatically from the alias registry; it
+never needs manual maintenance.
+
+.. mpl-renamed-properties::

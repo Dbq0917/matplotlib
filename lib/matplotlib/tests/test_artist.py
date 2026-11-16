@@ -1,4 +1,8 @@
+import difflib
 import io
+import pickle
+import re
+import warnings
 from itertools import chain
 
 import numpy as np
@@ -284,6 +288,143 @@ def test_artist_set_duplicate_aliases_raises():
 
     with pytest.raises(TypeError, match="aliases of one another"):
         line.set(lw=2, linewidth=3)
+
+
+def test_set_suggests_similar_property_name():
+    line = mlines.Line2D([0, 1], [0, 1])
+    with pytest.raises(AttributeError,
+                       match=re.escape("Did you mean 'linewidth'?")):
+        line.set(linewdith=2)
+
+
+def test_set_suggests_at_most_three_sorted_candidates():
+    line = mlines.Line2D([0, 1], [0, 1])
+    with pytest.raises(AttributeError) as excinfo:
+        line.set(markr=2)
+    message = str(excinfo.value)
+    suggestions = re.findall(r"'(\w+)'", message.split("Did you mean")[1])
+    assert 1 <= len(suggestions) <= 3
+    ratios = [difflib.SequenceMatcher(None, "markr", name).ratio()
+              for name in suggestions]
+    assert ratios == sorted(ratios, reverse=True)
+    # The full property list must not be dumped into the error message.
+    assert "markerfacecolor" not in message
+
+
+def test_set_unknown_property_without_close_match():
+    line = mlines.Line2D([0, 1], [0, 1])
+    with pytest.raises(AttributeError) as excinfo:
+        line.set(zzz_unknown=1)
+    assert "Did you mean" not in str(excinfo.value)
+
+
+def test_getp_suggests_similar_property_name():
+    line = mlines.Line2D([0, 1], [0, 1])
+    with pytest.raises(AttributeError,
+                       match=re.escape("Did you mean 'linewidth'?")):
+        martist.getp(line, "linewdith")
+
+
+def test_renamed_property_set_get_and_warn():
+    fig, ax = plt.subplots()
+    with pytest.warns(mpl.MatplotlibDeprecationWarning,
+                      match="'axis_bgcolor'.*renamed.*'facecolor'"):
+        ax.set(axis_bgcolor="red")
+    assert mcolors.same_color(ax.get_facecolor(), "red")
+    with pytest.warns(mpl.MatplotlibDeprecationWarning,
+                      match="'axisbg'.*renamed.*'facecolor'"):
+        ax.set(axisbg="blue")
+    assert mcolors.same_color(ax.get_facecolor(), "blue")
+    with pytest.warns(mpl.MatplotlibDeprecationWarning,
+                      match="'axis_bgcolor'.*renamed.*'facecolor'"):
+        value = martist.getp(ax, "axis_bgcolor")
+    assert mcolors.same_color(value, "blue")
+
+
+def test_renamed_property_update_and_setp():
+    fig, ax = plt.subplots()
+    with pytest.warns(mpl.MatplotlibDeprecationWarning):
+        ax.update({"axis_bgcolor": "red"})
+    assert mcolors.same_color(ax.get_facecolor(), "red")
+    with pytest.warns(mpl.MatplotlibDeprecationWarning):
+        martist.setp(ax, axis_bgcolor="green")
+    assert mcolors.same_color(ax.get_facecolor(), "green")
+
+
+def test_renamed_property_warnings_can_be_suppressed():
+    fig, ax = plt.subplots()
+    with martist.suppress_alias_warnings():
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # Any warning becomes an error.
+            ax.set(axis_bgcolor="red")
+    assert mcolors.same_color(ax.get_facecolor(), "red")
+    # Outside the context manager, the warning is emitted again.
+    with pytest.warns(mpl.MatplotlibDeprecationWarning):
+        ax.set(axis_bgcolor="blue")
+
+
+def test_renamed_property_inheritance():
+    class Parent(martist.Artist):
+        _renamed_properties = {"old_colour": "colour"}
+
+        def set_colour(self, value):
+            self._colour = value
+
+        def get_colour(self):
+            return self._colour
+
+    class Child(Parent):
+        _renamed_properties = {"old_size": "size"}
+
+        def set_size(self, value):
+            self._size = value
+
+        def get_size(self):
+            return self._size
+
+    # Aliases are merged along the MRO: the rename introduced by Child does
+    # not invalidate the alias defined by Parent.
+    assert Child._get_renamed_properties() == {
+        "old_colour": "colour", "old_size": "size"}
+    assert Parent._get_renamed_properties() == {"old_colour": "colour"}
+
+    obj = Child()
+    with pytest.warns(mpl.MatplotlibDeprecationWarning):
+        obj.set(old_colour="red", old_size=3)
+    assert obj.get_colour() == "red"
+    assert obj.get_size() == 3
+
+    # Aliases defined on _AxesBase resolve on the Axes subclass.
+    fig, ax = plt.subplots()
+    assert "axis_bgcolor" in type(ax)._get_renamed_properties()
+    with pytest.warns(mpl.MatplotlibDeprecationWarning):
+        ax.set(axis_bgcolor="red")
+    assert mcolors.same_color(ax.get_facecolor(), "red")
+
+
+def test_renamed_property_serialization_roundtrip():
+    fig, ax = plt.subplots()
+    with pytest.warns(mpl.MatplotlibDeprecationWarning):
+        ax.set(axis_bgcolor="red")
+
+    # Serialization (properties()) uses the canonical new names only.
+    props = ax.properties()
+    assert "facecolor" in props
+    assert "axis_bgcolor" not in props
+    assert "axisbg" not in props
+
+    # Deserializing a mapping that still uses the historical name works and
+    # yields an equivalent object.
+    ax_new = plt.figure().add_subplot()
+    ax_new.set(facecolor="red")
+    ax_old = plt.figure().add_subplot()
+    with pytest.warns(mpl.MatplotlibDeprecationWarning):
+        ax_old.update({"axis_bgcolor": "red"})
+    assert ax_old.get_facecolor() == ax_new.get_facecolor()
+
+    # Pickle round-trip preserves the object.
+    fig_rt = pickle.loads(pickle.dumps(fig))
+    assert fig_rt.axes[0].get_facecolor() == ax.get_facecolor()
 
 
 def test_None_zorder():

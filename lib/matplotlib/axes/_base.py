@@ -558,6 +558,14 @@ class _process_plot_var_args:
 class _AxesBase(martist.Artist):
     name = "rectilinear"
 
+    # Historical property names that keep working (with a deprecation
+    # warning) through the property migration mechanism; see
+    # `.Artist._renamed_properties`.
+    _renamed_properties = {
+        "axisbg": "facecolor",         # deprecated in Matplotlib 2.0
+        "axis_bgcolor": "facecolor",   # removed in Matplotlib 2.2
+    }
+
     # axis names are the prefixes for the attributes that contain the
     # respective axis; e.g. 'x' <-> self.xaxis, containing an XAxis.
     # Note that PolarAxes uses these attributes as well, so that we have

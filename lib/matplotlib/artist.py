@@ -1,6 +1,7 @@
 from collections import namedtuple
 from collections.abc import Sequence
 import contextlib
+import difflib
 from enum import StrEnum, auto
 from functools import cache, reduce, wraps
 import inspect
@@ -150,6 +151,64 @@ def _stale_axes_callback(self, val):
 _XYPair = namedtuple("_XYPair", "x y")
 
 
+_alias_warnings_suppressed = 0
+
+
+@contextlib.contextmanager
+def suppress_alias_warnings():
+    """
+    Context manager to suppress deprecation warnings for renamed properties.
+
+    Accessing a property through a historical (renamed) name normally emits a
+    `~matplotlib.MatplotlibDeprecationWarning` pointing at the new name.  When
+    processing many artists in a batch (e.g. bulk-converting saved figures),
+    these warnings can flood the logs; this context manager silences them for
+    the enclosed block::
+
+        with mpl.artist.suppress_alias_warnings():
+            for ax in fig.axes:
+                ax.set(axis_bgcolor="red")
+
+    The warnings can also be filtered through the standard `warnings`
+    machinery, e.g. ``warnings.filterwarnings(
+    "ignore", category=mpl.MatplotlibDeprecationWarning)``.
+    """
+    global _alias_warnings_suppressed
+    _alias_warnings_suppressed += 1
+    try:
+        yield
+    finally:
+        _alias_warnings_suppressed -= 1
+
+
+def _warn_renamed_property(cls, old_name, new_name):
+    """Emit a deprecation warning for access through a renamed property."""
+    if _alias_warnings_suppressed:
+        return
+    _api.warn_deprecated(
+        "3.12",
+        message=f"The {old_name!r} property of {cls.__name__} has been renamed "
+                f"to {new_name!r}; please use the new name.")
+
+
+def _suggest_property_names(obj, prop_name):
+    """
+    Return a "Did you mean ...?" message suffix for an unknown property name.
+
+    Up to three candidate property names, sorted by decreasing similarity,
+    are suggested; the full property list is never included.
+    """
+    candidates = [name[4:] for name in dir(obj)
+                  if name.startswith("set_")
+                  and callable(getattr(obj, name, None))]
+    matches = difflib.get_close_matches(prop_name, candidates, n=3, cutoff=0.6)
+    if not matches:
+        return ""
+    if len(matches) == 1:
+        return f". Did you mean {matches[0]!r}?"
+    return ". Did you mean one of " + ", ".join(map(repr, matches)) + "?"
+
+
 class Artist:
     """
     Abstract base class for objects that render into a FigureCanvas.
@@ -191,6 +250,28 @@ class Artist:
                           # that we don't want this in set()
         '3d_properties',  # cannot be used as a keyword due to leading digit
     ]
+
+    # Mapping of historical property names to their current names, e.g.
+    # {"axis_bgcolor": "facecolor"}.  Accessing a renamed property through
+    # .set()/.update()/setp()/getp() resolves to the current name and emits a
+    # MatplotlibDeprecationWarning.  Subclasses may extend this mapping with
+    # their own renames; entries are merged along the MRO (subclass entries
+    # take precedence), so a rename in a subclass never invalidates aliases
+    # defined by parent classes.
+    _renamed_properties = {}
+
+    @classmethod
+    def _get_renamed_properties(cls):
+        """
+        Return a dict mapping historical property names to current names.
+
+        The mapping is the merge of the ``_renamed_properties`` dicts defined
+        along the MRO of *cls*, with subclass entries taking precedence.
+        """
+        renamed = {}
+        for klass in reversed(cls.__mro__):
+            renamed.update(vars(klass).get("_renamed_properties", {}))
+        return renamed
 
     @classmethod
     def _update_set_signature_and_docstring(cls):
@@ -1307,6 +1388,7 @@ Supported properties are
         property name for "{prop_name}".
         """
         ret = []
+        renamed_properties = None  # Computed lazily, only on the error path.
         for k, v in props.items():
             # Allow attributes we want to be able to update through
             # art.update, art.set, setp.
@@ -1315,8 +1397,17 @@ Supported properties are
             else:
                 func = getattr(self, f"set_{k}", None)
                 if not callable(func):
+                    if renamed_properties is None:
+                        renamed_properties = type(self)._get_renamed_properties()
+                    new_name = renamed_properties.get(k)
+                    if new_name is not None:
+                        func = getattr(self, f"set_{new_name}", None)
+                        if callable(func):
+                            _warn_renamed_property(type(self), k, new_name)
+                if not callable(func):
                     raise AttributeError(
-                        errfmt.format(cls=type(self), prop_name=k),
+                        errfmt.format(cls=type(self), prop_name=k)
+                        + _suggest_property_names(self, k),
                         name=k)
                 ret.append(func(v))
         if ret:
@@ -1966,7 +2057,19 @@ def getp(obj, property=None):
         ret = insp.pprint_getters()
         print('\n'.join(ret))
         return
-    return getattr(obj, 'get_' + property)()
+    func = getattr(obj, 'get_' + property, None)
+    if not callable(func) and isinstance(obj, Artist):
+        new_name = type(obj)._get_renamed_properties().get(property)
+        if new_name is not None:
+            func = getattr(obj, 'get_' + new_name, None)
+            if callable(func):
+                _warn_renamed_property(type(obj), property, new_name)
+    if not callable(func):
+        raise AttributeError(
+            f"{type(obj).__name__!r} object has no property {property!r}"
+            + _suggest_property_names(obj, property),
+            name=property)
+    return func()
 
 # alias
 get = getp

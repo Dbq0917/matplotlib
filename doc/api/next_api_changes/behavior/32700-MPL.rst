@@ -1,0 +1,42 @@
+Property migration mechanism: typo suggestions and renamed-property aliases
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Unknown property names now trigger suggestions
+----------------------------------------------
+
+Passing a misspelled property name to `.Artist.set`, `.Artist.update`,
+`~.pyplot.setp` or `~.pyplot.getp` still raises `AttributeError`, but the
+error message now suggests up to three candidate property names, sorted by
+similarity::
+
+    >>> line.set(linewdith=2)
+    AttributeError: Line2D.set() got an unexpected keyword argument
+    'linewdith'. Did you mean 'linewidth'?
+
+Renamed properties keep working as aliases
+------------------------------------------
+
+Artists now support a per-class ``_renamed_properties`` registry mapping
+historical property names to their current names.  Accessing a property
+through a historical name resolves to the current name and emits a
+`.MatplotlibDeprecationWarning` pointing at the new name.  The initial
+registry contains the historical `.Axes` background-color properties:
+
+- ``axisbg`` and ``axis_bgcolor`` are aliases for ``facecolor``.
+
+Aliases are merged along the inheritance hierarchy, so a rename introduced
+by a subclass does not invalidate aliases defined by its base classes.
+
+The deprecation warnings can be suppressed for bulk processing with
+`.artist.suppress_alias_warnings` or through the standard `warnings`
+machinery.
+
+Serialization compatibility policy
+----------------------------------
+
+Property mappings produced by Matplotlib (e.g. `.Artist.properties`) always
+use the *current* canonical names; historical names are never written out.
+Deserialization (`.Artist.update`, `.Artist.set`, `~.pyplot.setp`) accepts
+*both* current and historical names, so files and scripts written against
+older Matplotlib versions keep working.  Pickled figures are unaffected by
+renames, because pickles store attribute values, not property names.
